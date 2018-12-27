@@ -47,7 +47,7 @@ def load_datasets(data_dir):
         )
     ])
 
-    train_transforms = transforms.Compose([
+    test_transforms = transforms.Compose([
         transforms.Resize(255),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
@@ -96,7 +96,7 @@ def last_module(model):
     """
     key = str(next(reversed(model._modules)))
     modules_d = model._modules
-    return module_d, key
+    return modules_d, key
 
 
 def hidden_node_count(module):
@@ -135,10 +135,10 @@ def build_model(arch, learning_rate, num_labels, hidden_units=None):
         nn.Linear(input_nodes, hidden_nodes),
         nn.ReLU(),
         nn.Dropout(p=0.1),
-        nn.Linear(hiddel_nodes, hidden_nodes),
+        nn.Linear(hidden_nodes, hidden_nodes),
         nn.ReLU(),
         nn.Dropout(p=0.1),
-        nn.Linear(hiddel_nodes, num_labels),
+        nn.Linear(hidden_nodes, num_labels),
         nn.LogSoftmax(dim=1)
     )
 
@@ -160,12 +160,11 @@ def accuracy(logps, labels):
     acc = torch.mean(equals.type(torch.FloatTensor)).item()
     return acc
 
-def train_network(model, criterion, optimizer, train_loader, test_loader, epochs, device, print_every=50):
+def train_network(model, criterion, optimizer, train_loader, test_loader, valid_loader, epochs, device, print_every=50):
     """
         Trains network according to specifications
     """
     step = 0
-    train_loss = 0
     
     model.to(device)
 
@@ -243,14 +242,14 @@ def main(data_dir, save_dir, arch, learning_rate, hidden_units, epochs, gpu):
     
     train_loader, valid_loader, test_loader = data_loaders(data_dir)
 
-    idx_to_class = {str(v): str(k) for k,v in train_loader.dataset.class_to_idx.items()},
+    idx_to_class = {str(v):str(k) for k,v in train_loader.dataset.class_to_idx.items()}
     num_labels = len(idx_to_class)
     
     model, criterion, optimizer = build_model(arch, learning_rate, num_labels, hidden_units)
     model.idx_to_class = idx_to_class
     
     print('Starting training...\n')
-    model, accuracy = train_network(model, criterion, optimizer, train_loader, test_loader, epochs, device, print_every=50)
+    model, accuracy = train_network(model, criterion, optimizer, train_loader, test_loader, valid_loader, epochs, device, print_every=50)
     print(f'Done training. Accuracy: {accuracy*100:2.2f} %\n')
     
     if save_dir:
