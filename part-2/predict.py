@@ -29,12 +29,13 @@ def predict(image_path, model, device, topk=5):
     top_p, top_categories = ps.topk(topk, dim=1)
     return top_p, top_categories
 
+
 def solution(model, top_p, top_idx, category_names):
     """
         Makes solutions human readable
         
         - Converts probabilities to numpy array
-        - Replaces the ids with human readable class names
+        - Replaces the idx with human readable class names
     """
     top_p = top_p[0].cpu().detach().numpy()
 
@@ -45,6 +46,8 @@ def solution(model, top_p, top_idx, category_names):
         top_cats_names.append(name)
 
     return top_p, top_cats_names
+
+
 
 ########
 # Main #
