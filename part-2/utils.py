@@ -69,12 +69,12 @@ def cat_to_name(cat, filename):
     return cat_to_name[str(cat)]
 
 
-def save_model(filepath, model, epochs, optimizer, class_to_idx):
+def save_model(filepath, model, epochs, optimizer, idx_to_class):
     checkpoint = {
         # 'input_size': node_sizes[0],
         # 'output_size': node_sizes[-1],
         #'features': model.features,
-        'idx_to_class' : {str(v): str(k) for k,v in class_to_idx.items()},
+        'idx_to_class' : idx_to_class,
         'classifier': model.classifier,
         'state_dict': model.state_dict(),
         'epochs': epochs,
@@ -108,7 +108,68 @@ def load_model(filepath):
     return model
 
 
+def center_crop(image):
+    """
+        Crop out the center 224x224 portion of the image.
+    """
+    crop_width, crop_height = (224, 224)
+    width, height = image.size        
+
+    left = (width - crop_width)//2
+    top = (height - crop_height)//2
+    right = (width + crop_width)//2
+    bottom = (height + crop_height)//2
+
+    return image.crop((left, top, right, bottom))
+    
+    
+def short_side(image):
+    """
+        Resizes the images where the shortest side is 256 pixels,
+        keeping the aspect ratio.
+    """
+    shortest_side = 256
+    width, height = image.size
+
+    if width < height:
+        new_width = shortest_side
+        new_height = height//width*shortest_side
+    else:
+        new_height = shortest_side
+        new_width = width//height*shortest_side
+
+    new_size = (int(new_width), int(new_height))
+    
+    return image.resize(new_size, Image.ANTIALIAS)
+
+
 def process_image(image_path):
+    ''' 
+        Scales, crops, and normalizes a PIL image for a PyTorch model,
+        returns an Numpy array
+    '''
+    with Image.open(image_path) as image:
+        np_img = np.array(center_crop(short_side(image)))
+
+    # Subtract the means from each color channel,
+    #   then divide by the standard deviation.
+    #   the 255 term is because the mean and std are normalized
+    mean = np.array([0.485, 0.456, 0.406])*255
+    std = np.array([0.229, 0.224, 0.225])*255
+
+    np_img = (np_img - mean)/std
+    
+    # PyTorch expects the color channel to be the first dimension
+    #   but it's the third dimension in the PIL image and Numpy array.
+    #   Reorder dimensions using ndarray.transpose.
+    #   The color channel needs to be first and retain the order of the other two dimensions.
+
+    np_img = np_img.transpose((2, 0, 1))
+
+    return np_img
+
+
+def process_image_alt(image_path):
     ''' 
         Scales, crops, and normalizes a PIL image for a PyTorch model,
         returns an Numpy array
@@ -129,7 +190,6 @@ def process_image(image_path):
         return np.array(image)
     
     return image_transform(image_path)
-
 
 
 def imshow(image, ax=None, title=None):
