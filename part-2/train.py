@@ -62,7 +62,7 @@ def load_datasets(data_dir):
     # Load the datasets with transforms
     train_dataset = datasets.ImageFolder(train_dir, transform=train_transforms)
     valid_dataset = datasets.ImageFolder(valid_dir, transform=valid_transforms)
-    test_dataset = datasets.ImageFolder(test_dir, transform=train_transforms)
+    test_dataset = datasets.ImageFolder(test_dir, transform=test_transforms)
     
     return train_dataset, valid_dataset, test_dataset
 
@@ -87,37 +87,64 @@ def data_loaders(data_dir, batch_size=32, shuffle=True):
 ###############################
 # Model Building and Training #
 ###############################
-def build_model(arch, hidden_units, learning_rate):
+def last_module(model):
+    """
+        Finds last element of OrderedDict
+
+        some models call it 'classifier' some 'fc'
+        this function makes calls make generic
+    """
+    key = str(next(reversed(model._modules)))
+    modules_d = model._modules
+    return module_d, key
+
+
+def hidden_node_count(module):
+    """
+        Returns the numbers of inputs and hidden layer inputs
+    """
+    if type(module) == torch.nn.modules.container.Sequential:
+        # strip Sequential 
+        inputs = list(module)[0].in_features
+        outputs = list(module)[0].out_features
+    else:
+        inputs = module.in_features
+        outputs = module.out_features
+
+    return inputs, outputs
+
+
+def build_model(arch, learning_rate, num_labels, hidden_units=None):
     """
         Loads base model and modifies classifiers
     """
     model = base_model(arch)
-    
-    if hidden_units < 102:
-        print('Too few hidden units, need at least 102 outputs.\nSetting hidden_units to 4096')
-        hidden_units = 4096
-    elif hidden_units > 16386:
-        print('Too many hidden units, need at most 16386 units.\nSetting hidden_units to 4096')
-        hidden_units = 4096
-        
-    node_sizes = [25088, 16384, hidden_units, 102]
+    module_d, key = last_module(model)
 
+    input_nodes, hidden_nodes = hidden_node_count(model._modules[key])
+
+    if hidden_units is not None:
+        if hidden_nodes < num_labels:
+            print(f'Too few hidden units, need at least {num_labels} outputs.\nSetting hidden_units to {hidden_nodes}')
+        elif hidden_nodes > input_nodes:
+            print(f'Too many hidden units, need at most {input_nodes} units.\nSetting hidden_units to {hidden_nodes}')
+        else:
+            hidden_nodes = hidden_units
+        
     classifier = nn.Sequential(
-        nn.Linear(node_sizes[0], node_sizes[1]),
+        nn.Linear(input_nodes, hidden_nodes),
         nn.ReLU(),
-        nn.Dropout(p=0.2),
-        nn.Linear(node_sizes[1], node_sizes[2]),
+        nn.Dropout(p=0.1),
+        nn.Linear(hiddel_nodes, hidden_nodes),
         nn.ReLU(),
-        nn.Dropout(p=0.2),
-        nn.Linear(node_sizes[2], node_sizes[3]),
+        nn.Dropout(p=0.1),
+        nn.Linear(hiddel_nodes, num_labels),
         nn.LogSoftmax(dim=1)
     )
-    
-    # replace classifier
-    model.classifier = classifier
-    
+
+    model._modules[key] = classifier
     criterion = nn.NLLLoss()
-    optimizer = optim.Adam(model.classifier.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model._modules[key].parameters(), lr=learning_rate)
     
     return model, criterion, optimizer
 
@@ -126,20 +153,28 @@ def build_model(arch, hidden_units, learning_rate):
 #######################
 # Testing the Network #
 #######################
+def accuracy(logps, labels):
+    ps = torch.exp(logps)
+    top_ps, top_class = ps.topk(1, dim=1)
+    equals = top_class == labels.view(*top_class.shape)
+    acc = torch.mean(equals.type(torch.FloatTensor)).item()
+    return acc
+
 def train_network(model, criterion, optimizer, train_loader, test_loader, epochs, device, print_every=50):
     """
         Trains network according to specifications
     """
     step = 0
-    running_loss = 0
+    train_loss = 0
     
     model.to(device)
 
     for epoch in keep_awake(range(epochs)):
+        train_loss = 0
+        train_accuracy = 0
         for images, labels in train_loader:
-            step += 1
-
             images, labels = images.to(device), labels.to(device)
+            step += 1
 
             optimizer.zero_grad()
 
@@ -149,16 +184,16 @@ def train_network(model, criterion, optimizer, train_loader, test_loader, epochs
 
             optimizer.step()
 
-            running_loss += loss.item()
+            train_loss += loss.item()
+            train_accuracy += accuracy(logps, labels)
 
             if step % print_every == 0:
                 model.eval()
-                
+
+                # testing
                 test_loss = 0
-                accuracy = 0
-
+                test_accuracy = 0
                 for images, labels in test_loader:
-
                     images, labels = images.to(device), labels.to(device)
 
                     with torch.no_grad():
@@ -166,24 +201,36 @@ def train_network(model, criterion, optimizer, train_loader, test_loader, epochs
                         loss = criterion(logps, labels)
 
                     test_loss += loss.item()
+                    test_accuracy += accuracy(logps, labels)
 
-                    # accuracy
-                    ps = torch.exp(logps)
-                    top_ps, top_class = ps.topk(1, dim=1)
-                    equals = top_class == labels.view(*top_class.shape)
-                    accuracy += torch.mean(equals.type(torch.FloatTensor)).item()
+                # validation
+                valid_loss = 0
+                valid_accuracy = 0
+                for images, labels in valid_loader:
+                    images, labels = images.to(device), labels.to(device)
 
+                    with torch.no_grad():
+                        logps = model(images)
+                        loss = criterion(logps, labels)
+
+                    valid_loss += loss.item()
+                    valid_accuracy += accuracy(logps, labels)
+
+                # report
                 print(
-                    f"Epoch {epoch+1}/{epochs}   "
-                    f"Train loss: {running_loss/print_every:.3f}   "
-                    f"Test loss: {test_loss/len(test_loader):.3f}  "
-                    f"Test accuracy: {accuracy/len(test_loader):.3f}"
-                     )
+                    f"Epoch {epoch+1}/{epochs} "
+                    f"Train loss: {train_loss/print_every:.3f} "
+                    f"Train accuracy: {train_accuracy/print_every:.3f} "
+                    f"Test loss: {test_loss/len(test_loader):.3f} "
+                    f"Test accuracy: {test_accuracy/len(test_loader):.3f} "
+                    f"Valid loss: {valid_loss/len(valid_loader):.3f} "
+                    f"Valid accuracy: {valid_accuracy/len(valid_loader):.3f}"
+                )
 
-                running_loss = 0
                 model.train()
 
-    return model, accuracy/len(test_loader)
+    return model, test_accuracy/len(test_loader)
+
 
 ########
 # Main #
@@ -195,8 +242,12 @@ def main(data_dir, save_dir, arch, learning_rate, hidden_units, epochs, gpu):
     device = get_valid_device(gpu)
     
     train_loader, valid_loader, test_loader = data_loaders(data_dir)
+
+    idx_to_class = {str(v): str(k) for k,v in train_loader.dataset.class_to_idx.items()},
+    num_labels = len(idx_to_class)
     
-    model, criterion, optimizer = build_model(arch, hidden_units, learning_rate) 
+    model, criterion, optimizer = build_model(arch, learning_rate, num_labels, hidden_units)
+    model.idx_to_class = idx_to_class
     
     print('Starting training...\n')
     model, accuracy = train_network(model, criterion, optimizer, train_loader, test_loader, epochs, device, print_every=50)
@@ -206,7 +257,8 @@ def main(data_dir, save_dir, arch, learning_rate, hidden_units, epochs, gpu):
         print('Saving model...')
         filename = f'{arch}-accuracy-{accuracy*100:2.2f}.pth'
         filepath = os.path.abspath(os.path.join(save_dir, filename))
-        save_model(filepath, model, epochs, optimizer, test_loader.dataset.class_to_idx)
+        save_model(filepath, model, epochs, optimizer, idx_to_class)
+
 
 if __name__ == '__main__':
     """
@@ -264,7 +316,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--hidden_units', action='store',
                         type=int,
-                        default=4096,
+                        default=None,
                         dest='hidden_units',
                         help='Set number of hidden units')
     
