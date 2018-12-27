@@ -21,7 +21,7 @@ def predict(image_path, model, device, topk=5):
     '''
         Predict the class (or classes) of an image using a trained deep learning model.
     '''
-    image = torch.from_numpy(process_image(image_path))
+    image = torch.from_numpy(process_image(image_path)).float()
     image.requires_grad = False
     image = image.unsqueeze(0) # add batch dimension
     image = image.to(device)
